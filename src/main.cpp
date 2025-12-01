@@ -12,7 +12,6 @@
 #define RGB_LED_G 4
 #define RGB_LED_B 3
 
-
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
@@ -31,7 +30,6 @@ Color targets[] = {
   {0.5, 0, 1, "Purple"}
 };
 
-// All colors including recognition mode colors
 Color allColors[] = {
   {1, 0, 0, "Red"},
   {0, 1, 0, "Green"},
@@ -52,48 +50,57 @@ unsigned long startTime;
 unsigned long roundStartTime;
 int lastIndex = -1;
 
-// Game variables
 int score = 0;
 bool roundActive = false;
-#define ROUND_DURATION 30000  // 30 seconds in milliseconds
+#define ROUND_DURATION 30000
 #define POINTS_PER_COLOR 100
-
 #define LED_BRIGHTNESS 200
 
-// Game Mode Tolerances
-#define GAME_COLOR_TOLERANCE 0.8  // Default tolerance for game mode
-#define GAME_RED_TOLERANCE 0.8    // Red in game mode
-#define GAME_GREEN_TOLERANCE 0.8  // Green in game mode
-#define GAME_YELLOW_TOLERANCE 0.6 // Yellow in game mode
-#define GAME_PURPLE_TOLERANCE 0.8 // Purple in game mode
-#define GAME_BLUE_TOLERANCE 1.0   // Blue in game mode (most forgiving)
+#define GAME_COLOR_TOLERANCE 0.8
+#define GAME_RED_TOLERANCE 0.8
+#define GAME_GREEN_TOLERANCE 0.8
+#define GAME_YELLOW_TOLERANCE 0.6
+#define GAME_PURPLE_TOLERANCE 0.8
+#define GAME_BLUE_TOLERANCE 1.0
 
-// Recognition Mode Tolerances
-#define REC_COLOR_TOLERANCE 0.8  // Default tolerance for recognition mode
-#define REC_RED_TOLERANCE 0.9    // Red in recognition mode
-#define REC_GREEN_TOLERANCE 0.7  // Green in recognition mode
-#define REC_BLUE_TOLERANCE 1.0   // Blue in recognition mode (most forgiving)
-#define REC_YELLOW_TOLERANCE 0.8 // Yellow in recognition mode
-#define REC_ORANGE_TOLERANCE 0.7 // Orange in recognition mode
-#define REC_PURPLE_TOLERANCE 0.7 // Purple in recognition mode
-#define REC_NAVY_TOLERANCE 0.7   // Navy in recognition mode
-#define REC_MAGENTA_TOLERANCE 0.7 // Magenta in recognition mode
-#define REC_BROWN_TOLERANCE 0.8  // Brown in recognition mode
-#define REC_WHITE_TOLERANCE 0.9  // White in recognition mode
+#define REC_COLOR_TOLERANCE 0.8
+#define REC_RED_TOLERANCE 0.9
+#define REC_GREEN_TOLERANCE 0.7
+#define REC_BLUE_TOLERANCE 1.0
+#define REC_YELLOW_TOLERANCE 0.8
+#define REC_ORANGE_TOLERANCE 0.5
+#define REC_PURPLE_TOLERANCE 0.7
+#define REC_NAVY_TOLERANCE 0.7
+#define REC_MAGENTA_TOLERANCE 0.7
+#define REC_BROWN_TOLERANCE 0.8
+#define REC_WHITE_TOLERANCE 0.9
 
-// Button double-click variables
 int buttonClickCount = 0;
 unsigned long lastButtonPressTime = 0;
 unsigned long lastButtonReleaseTime = 0;
+unsigned long lastClickTime = 0;
 bool buttonWasPressed = false;
-#define DOUBLE_CLICK_TIMEOUT 600  // Time window for double-click in milliseconds
-#define LONG_PRESS_DURATION 2000  // Duration for long press in milliseconds
+#define DOUBLE_CLICK_TIMEOUT 1500
+#define LONG_PRESS_DURATION 2000
 
-// Color recognition mode
+unsigned long lastScreenUpdate = 0;
+#define SCREEN_UPDATE_INTERVAL 100
+
 bool colorRecognitionMode = false;
 bool longPressDetected = false;
+bool startupScreenDisplayed = false;
+int selectedMode = 0;  // 0 = Game, 1 = Detection
 
 Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X);
+
+void setCursorCentered(const char* text) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+  int16_t x = (SCREEN_WIDTH - w) / 2;
+  int16_t y = (SCREEN_HEIGHT - h) / 2;
+  display.setCursor(x, y);
+}
 
 void buzzerBeep(int duration = 200, int frequency = 1000) {
   tone(BUZZER_PIN, frequency);
@@ -103,42 +110,23 @@ void buzzerBeep(int duration = 200, int frequency = 1000) {
 
 float getColorTolerance(const char* colorName, bool isRecognitionMode) {
   if (isRecognitionMode) {
-    // Recognition mode tolerances
-    if (strcmp(colorName, "Red") == 0) {
-      return REC_RED_TOLERANCE;
-    } else if (strcmp(colorName, "Green") == 0) {
-      return REC_GREEN_TOLERANCE;
-    } else if (strcmp(colorName, "Blue") == 0) {
-      return REC_BLUE_TOLERANCE;
-    } else if (strcmp(colorName, "Yellow") == 0) {
-      return REC_YELLOW_TOLERANCE;
-    } else if (strcmp(colorName, "Orange") == 0) {
-      return REC_ORANGE_TOLERANCE;
-    } else if (strcmp(colorName, "Purple") == 0) {
-      return REC_PURPLE_TOLERANCE;
-    } else if (strcmp(colorName, "Navy") == 0) {
-      return REC_NAVY_TOLERANCE;
-    } else if (strcmp(colorName, "Magenta") == 0) {
-      return REC_MAGENTA_TOLERANCE;
-    } else if (strcmp(colorName, "Brown") == 0) {
-      return REC_BROWN_TOLERANCE;
-    } else if (strcmp(colorName, "White") == 0) {
-      return REC_WHITE_TOLERANCE;
-    }
+    if (strcmp(colorName, "Red") == 0) return REC_RED_TOLERANCE;
+    else if (strcmp(colorName, "Green") == 0) return REC_GREEN_TOLERANCE;
+    else if (strcmp(colorName, "Blue") == 0) return REC_BLUE_TOLERANCE;
+    else if (strcmp(colorName, "Yellow") == 0) return REC_YELLOW_TOLERANCE;
+    else if (strcmp(colorName, "Orange") == 0) return REC_ORANGE_TOLERANCE;
+    else if (strcmp(colorName, "Purple") == 0) return REC_PURPLE_TOLERANCE;
+    else if (strcmp(colorName, "Navy") == 0) return REC_NAVY_TOLERANCE;
+    else if (strcmp(colorName, "Magenta") == 0) return REC_MAGENTA_TOLERANCE;
+    else if (strcmp(colorName, "Brown") == 0) return REC_BROWN_TOLERANCE;
+    else if (strcmp(colorName, "White") == 0) return REC_WHITE_TOLERANCE;
     return REC_COLOR_TOLERANCE;
   } else {
-    // Game mode tolerances
-    if (strcmp(colorName, "Red") == 0) {
-      return GAME_RED_TOLERANCE;
-    } else if (strcmp(colorName, "Green") == 0) {
-      return GAME_GREEN_TOLERANCE;
-    } else if (strcmp(colorName, "Yellow") == 0) {
-      return GAME_YELLOW_TOLERANCE;
-    } else if (strcmp(colorName, "Purple") == 0) {
-      return GAME_PURPLE_TOLERANCE;
-    } else if (strcmp(colorName, "Blue") == 0) {
-      return GAME_BLUE_TOLERANCE;
-    }
+    if (strcmp(colorName, "Red") == 0) return GAME_RED_TOLERANCE;
+    else if (strcmp(colorName, "Green") == 0) return GAME_GREEN_TOLERANCE;
+    else if (strcmp(colorName, "Yellow") == 0) return GAME_YELLOW_TOLERANCE;
+    else if (strcmp(colorName, "Purple") == 0) return GAME_PURPLE_TOLERANCE;
+    else if (strcmp(colorName, "Blue") == 0) return GAME_BLUE_TOLERANCE;
     return GAME_COLOR_TOLERANCE;
   }
 }
@@ -156,15 +144,6 @@ const char* detectColor(float dr, float dg, float db) {
   }
   
   return closestColor;
-}
-
-void setCursorCentered(const char* text) {
-  int16_t x1, y1;
-  uint16_t w, h;
-  display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-  int16_t x = (SCREEN_WIDTH - w) / 2;
-  int16_t y = (SCREEN_HEIGHT - h) / 2;
-  display.setCursor(x, y);
 }
 
 void changeColor() {
@@ -191,6 +170,18 @@ void changeColor() {
 }
 
 void startNewRound() {
+  // 3-second countdown timer
+  for (int i = 3; i > 0; i--) {
+    display.clearDisplay();
+    display.setTextSize(3);
+    char buffer[10];
+    sprintf(buffer, "%d", i);
+    setCursorCentered(buffer);
+    display.printf("%s", buffer);
+    display.display();
+    delay(1000);
+  }
+  
   score = 0;
   roundStartTime = millis();
   changeColor();
@@ -198,6 +189,13 @@ void startNewRound() {
 
 void endRound() {
   roundActive = false;
+  startupScreenDisplayed = false;
+  
+  // Turn off LED
+  digitalWrite(RGB_LED_R, LOW);
+  digitalWrite(RGB_LED_G, LOW);
+  digitalWrite(RGB_LED_B, LOW);
+  
   display.clearDisplay();
   char buffer[50];
   display.setTextSize(2);
@@ -210,34 +208,63 @@ void endRound() {
   delay(500);
   buzzerBeep(500, 1200);
   delay(2000);
-
 }
 
 void showStartScreen() {
   display.clearDisplay();
+  display.setTextSize(1);
+  
+  // Calculate centered positions for each line
+  int16_t x1, y1;
+  uint16_t w1, h1;
+  display.getTextBounds("Press twice", 0, 0, &x1, &y1, &w1, &h1);
+  int16_t x_pos1 = (SCREEN_WIDTH - w1) / 2;
+  
+  uint16_t w2, h2;
+  display.getTextBounds("to start game!", 0, 0, &x1, &y1, &w2, &h2);
+  int16_t x_pos2 = (SCREEN_WIDTH - w2) / 2;
+  
+  // Draw text with vertical spacing
+  display.setCursor(x_pos1, 20);
+  display.printf("Press twice");
+  display.setCursor(x_pos2, 40);
+  display.printf("to start game!");
+  display.display();
+}
+
+void showColorGameScreen() {
+  display.clearDisplay();
   display.setTextSize(2);
   setCursorCentered("Color Game");
   display.printf("Color Game");
-  display.setTextSize(2);
   display.display();
-  delay(1500);
-  
+}
+
+void showModeMenu() {
   display.clearDisplay();
-  char buffer[50];
-  display.setTextSize(2);
-  sprintf(buffer, "Time: %lu s", ROUND_DURATION / 1000);
-  setCursorCentered(buffer);
-  display.printf("%s", buffer);
-  display.display();
-  delay(1500);
+  display.setTextSize(1);
   
-  display.clearDisplay();
-  display.setTextSize(2);
-  display.setCursor(0, 8);
-  setCursorCentered("Press to\n  start!");
-  display.printf("Press to\n  start!");
+  // Display title
+  display.setCursor(40, 5);
+  display.printf("Select Mode");
+  
+  // Display Game option
+  display.setCursor(10, 25);
+  if (selectedMode == 0) {
+    display.printf(">> Game");
+  } else {
+    display.printf("   Game");
+  }
+  
+  // Display Detection option
+  display.setCursor(10, 45);
+  if (selectedMode == 1) {
+    display.printf(">> Detection");
+  } else {
+    display.printf("   Detection");
+  }
+  
   display.display();
-  delay(2000);
 }
 
 void setup() {
@@ -269,58 +296,90 @@ void setup() {
   lastIndex = randomIndex;
   currentTarget = targets[randomIndex];
   
-  showStartScreen();
+  showColorGameScreen();
+  delay(1000);
+  showModeMenu();
 }
 
 void loop() {
-  // If game is not active and not in recognition mode, show startup screen
   if (!roundActive && !colorRecognitionMode) {
-    showStartScreen();
+    if (!startupScreenDisplayed) {
+      showModeMenu();
+      startupScreenDisplayed = true;
+    }
   }
   
   uint16_t clear, red, green, blue;
-
-  // Check if button is pressed
   bool buttonPressed = (digitalRead(BUTTON_PIN) == LOW);
+  unsigned long currentTime = millis();
   
+  // Simple button state tracking
   if (buttonPressed && !buttonWasPressed) {
     // Button just pressed
-    lastButtonPressTime = millis();
     buttonWasPressed = true;
+    lastButtonPressTime = currentTime;
     longPressDetected = false;
-  } else if (buttonPressed && buttonWasPressed) {
-    // Button is being held
-    unsigned long pressedDuration = millis() - lastButtonPressTime;
-    
-    // Long press to switch to detection mode
-    if (pressedDuration > LONG_PRESS_DURATION && !longPressDetected) {
-      longPressDetected = true;
-      colorRecognitionMode = true;
-      roundActive = false;
-      buzzerBeep(200, 1400);
-      delay(100);
-      buzzerBeep(200, 1400);
-      display.clearDisplay();
-      setCursorCentered("Detection");
-      display.printf("Detection");
-      display.display();
-      delay(1000);
-    }
-  } else if (!buttonPressed && buttonWasPressed) {
+  } 
+  else if (!buttonPressed && buttonWasPressed) {
     // Button just released
-    unsigned long pressDuration = millis() - lastButtonPressTime;
+    unsigned long pressDuration = currentTime - lastButtonPressTime;
     
-    // If released quickly (not a long press), start the game
-    if (pressDuration < LONG_PRESS_DURATION && !longPressDetected) {
-      if (!roundActive && !colorRecognitionMode) {
-        roundActive = true;
+    if (pressDuration >= LONG_PRESS_DURATION) {
+      // Long press detected
+      if (roundActive || colorRecognitionMode) {
+        // Exit Game or Detection mode and return to menu
+        colorRecognitionMode = false;
+        roundActive = false;
+        startupScreenDisplayed = false;
+        
+        // Turn off LED
+        digitalWrite(RGB_LED_R, LOW);
+        digitalWrite(RGB_LED_G, LOW);
+        digitalWrite(RGB_LED_B, LOW);
+        
         buzzerBeep(200, 1000);
-        startNewRound();
+        showModeMenu();
+      } else {
+        // In menu mode - start selected mode
+        if (selectedMode == 0) {
+          // Start Game mode
+          colorRecognitionMode = false;
+          roundActive = true;
+          startupScreenDisplayed = false;
+          buzzerBeep(200, 1000);
+          startNewRound();
+        } else {
+          // Start Detection mode
+          colorRecognitionMode = true;
+          roundActive = false;
+          startupScreenDisplayed = false;
+          buzzerBeep(200, 1400);
+          delay(100);
+          buzzerBeep(200, 1400);
+          display.clearDisplay();
+          setCursorCentered("Detection");
+          display.printf("Detection");
+          display.display();
+          delay(1000);
+        }
+      }
+    } else {
+      // Short press - toggle selected mode (only in menu)
+      if (!roundActive && !colorRecognitionMode) {
+        selectedMode = 1 - selectedMode;  // Toggle between 0 and 1
+        showModeMenu();
+        buzzerBeep(200, 800);
       }
     }
     
-    lastButtonReleaseTime = millis();
     buttonWasPressed = false;
+  } 
+  else if (buttonPressed && buttonWasPressed) {
+    // Button still pressed - check for long press
+    unsigned long pressDuration = currentTime - lastButtonPressTime;
+    if (pressDuration >= LONG_PRESS_DURATION && !longPressDetected) {
+      longPressDetected = true;
+    }
   }
 
   tcs.setInterrupt(false);
@@ -329,13 +388,11 @@ void loop() {
   tcs.setInterrupt(true);
 
   if (colorRecognitionMode) {
-    // Color recognition mode - display detected color name
     if (clear > 0) {
       float dr = (float)red / clear;
       float dg = (float)green / clear;
       float db = (float)blue / clear;
       
-      // Normalize to 0-1 range based on max value
       float maxVal = max({dr, dg, db});
       if (maxVal > 0) {
         dr /= maxVal;
@@ -356,13 +413,11 @@ void loop() {
                      red, green, blue, clear, dr, dg, db, detectedColor);
     }
   } else if (roundActive) {
-    // Normal game mode - only process when round is active
     if (clear > 0) {
       float dr = (float)red / clear;
       float dg = (float)green / clear;
       float db = (float)blue / clear;
       
-      // Normalize to 0-1 range based on max value
       float maxVal = max({dr, dg, db});
       if (maxVal > 0) {
         dr /= maxVal;
@@ -372,7 +427,6 @@ void loop() {
       
       float distance = sqrt(pow(dr - currentTarget.r, 2) + pow(dg - currentTarget.g, 2) + pow(db - currentTarget.b, 2));
       
-      // Calculate remaining time
       unsigned long elapsedTime = millis() - roundStartTime;
       unsigned long remainingTime = (elapsedTime < ROUND_DURATION) ? (ROUND_DURATION - elapsedTime) / 1000 : 0;
 
@@ -380,12 +434,10 @@ void loop() {
       display.setTextSize(2);
       char buffer[50];
       
-      // Display target color
       sprintf(buffer, "Find: %s", currentTarget.name);
       setCursorCentered(buffer);
       display.printf("%s", buffer);
       
-      // Check for match and display appropriate message
       float tolerance = getColorTolerance(currentTarget.name, false);
       if (distance < tolerance) {
         score += POINTS_PER_COLOR;
@@ -403,22 +455,27 @@ void loop() {
         changeColor();
       }
       
-      // Show score and time
+      // Display all game info in one render
       display.clearDisplay();
-      display.setTextSize(2);
-      sprintf(buffer, "Score: %d", score);
-      setCursorCentered(buffer);
-      display.printf("%s", buffer);
+      display.setTextSize(1);
+      
+      char buffer1[50];
+      sprintf(buffer1, "Find: %s", currentTarget.name);
+      display.setCursor(0, 5);
+      display.printf("%s", buffer1);
+      
+      char buffer2[50];
+      sprintf(buffer2, "Score: %d", score);
+      display.setCursor(0, 25);
+      display.printf("%s", buffer2);
+      
+      char buffer3[50];
+      sprintf(buffer3, "Time: %lu s", remainingTime);
+      display.setCursor(0, 45);
+      display.printf("%s", buffer3);
+      
       display.display();
       
-      display.clearDisplay();
-      display.setTextSize(2);
-      sprintf(buffer, "Time: %lu s", remainingTime);
-      setCursorCentered(buffer);
-      display.printf("%s", buffer);
-      display.display();
-      
-      // Check if round time is up
       if (elapsedTime >= ROUND_DURATION) {
         endRound();
       }
